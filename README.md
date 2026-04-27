@@ -143,12 +143,6 @@ streamlit run app.py
 
 ---
 
-## 🌍 Impact (SDGs)
-
-* **SDG 10:** Reduced Inequalities
-* **SDG 8:** Decent Work and Economic Growth
-* **SDG 3:** Good Health and Well-being
-* **SDG 16:** Peace, Justice and Strong Institutions
 
 ---
 

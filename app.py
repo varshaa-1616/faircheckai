@@ -1,10 +1,8 @@
-# ============================================================
-# FairCheck AI - Dataset Bias + Model Prediction Bias Checker
-# ============================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
+import io
 
 from fairlearn.metrics import (
     MetricFrame,
@@ -15,763 +13,541 @@ from fairlearn.metrics import (
     false_positive_rate,
     false_negative_rate,
 )
-
 from sklearn.metrics import accuracy_score
-
+from gemini_explainer import explain_bias, generate_fairness_report, suggest_mitigation
 
 # ============================================================
-# Page Config
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
     page_title="FairCheck AI",
     page_icon="⚖️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ============================================================
-# CSS Fix for Dropdown + UI
+# CUSTOM CSS — Dark judicial aesthetic
 # ============================================================
 
 st.markdown(
     """
-    <style>
-    div[data-baseweb="select"] > div {
-        max-height: 300px !important;
-        overflow-y: auto !important;
-    }
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
 
-    .main-title {
-        font-size: 42px;
-        font-weight: 800;
-        color: #4A90E2;
-    }
+html, body, [class*="css"] {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background-color: #0a0a0f;
+    color: #e8e6e0;
+}
 
-    .subtitle {
-        font-size: 18px;
-        color: #555;
-    }
+.main { background-color: #0a0a0f; }
 
-    .metric-card {
-        padding: 15px;
-        border-radius: 12px;
-        background-color: #f7f9fc;
-        border: 1px solid #e0e0e0;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
+h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 3rem !important;
+    font-weight: 900 !important;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #f5c842 0%, #e8a020 50%, #c97b00 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0 !important;
+}
+
+h2, h3 {
+    font-family: 'Playfair Display', serif;
+    color: #f5c842;
+    border-bottom: 1px solid #2a2a35;
+    padding-bottom: 0.4rem;
+}
+
+.stMetric {
+    background: #13131c;
+    border: 1px solid #2a2a35;
+    border-left: 3px solid #f5c842;
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+}
+
+.stMetric label { color: #888 !important; font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; }
+.stMetric [data-testid="metric-container"] > div:nth-child(2) { color: #f5c842 !important; font-family: 'IBM Plex Mono', monospace; font-size: 1.6rem; }
+
+.stDataFrame { border: 1px solid #2a2a35; border-radius: 6px; }
+
+.stButton > button {
+    background: linear-gradient(135deg, #f5c842, #c97b00);
+    color: #0a0a0f;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1.5rem;
+    letter-spacing: 0.05em;
+    transition: opacity 0.2s;
+}
+.stButton > button:hover { opacity: 0.85; }
+
+.stSelectbox > div > div {
+    background: #13131c;
+    border: 1px solid #2a2a35;
+    color: #e8e6e0;
+}
+
+.stFileUploader {
+    background: #13131c;
+    border: 1px dashed #2a2a35;
+    border-radius: 8px;
+}
+
+.risk-low    { color: #4caf50; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+.risk-medium { color: #ff9800; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+.risk-high   { color: #f44336; font-weight: 700; font-family: 'IBM Plex Mono', monospace; }
+
+.hero-subtitle {
+    font-family: 'IBM Plex Mono', monospace;
+    color: #555;
+    font-size: 0.85rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-top: 0;
+}
+
+.info-card {
+    background: #13131c;
+    border: 1px solid #2a2a35;
+    border-radius: 8px;
+    padding: 1rem 1.4rem;
+    margin-bottom: 1rem;
+}
+
+.step-badge {
+    display: inline-block;
+    background: #f5c842;
+    color: #0a0a0f;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 2px;
+    margin-right: 8px;
+    letter-spacing: 0.1em;
+}
+
+div[data-testid="stExpander"] {
+    background: #13131c;
+    border: 1px solid #2a2a35;
+    border-radius: 6px;
+}
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
-
 # ============================================================
-# Header
+# HEADER
 # ============================================================
 
-st.markdown("<div class='main-title'>⚖️ FairCheck AI</div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='subtitle'>Dataset Bias Detection + Model Prediction Fairness Checker</div>",
-    unsafe_allow_html=True
+    """
+<h1>⚖️ FairCheck AI</h1>
+<p class="hero-subtitle">Bias Detection & Fairness Evaluation Toolkit · Powered by Claude AI</p>
+""",
+    unsafe_allow_html=True,
 )
 
-st.write("")
-st.write(
-    "FairCheck AI helps users inspect datasets and model predictions for hidden unfairness. "
-    "First upload a dataset to check dataset-level bias. Then optionally upload model predictions "
-    "to check whether the model makes biased decisions."
-)
+# API key check
+api_ok = bool(os.getenv("GEMINI_API_KEY"))
+if api_ok:
+    st.success("✅ Gemini API connected", icon="🤖")
+else:
+    st.error("❌ GEMINI_API_KEY not found. Add it to your .env file.")
 
+st.divider()
 
 # ============================================================
-# Helper Functions
+# SIDEBAR — ABOUT
 # ============================================================
 
-def risk_label(value):
-    value = abs(value)
+with st.sidebar:
+    st.markdown("### ⚖️ FairCheck AI")
+    st.markdown(
+        """
+        **Hack2Skill Hackathon Project**  
+        
+        Audit your ML models and datasets for bias across sensitive attributes like gender, race, or age.
+        
+        ---
+        **Pipeline:**
+        1. Upload Dataset
+        2. Dataset Bias Analysis
+        3. AI Explanation (Claude)
+        4. Upload Model Predictions
+        5. Model Fairness Metrics
+        6. What-If Simulator
+        
+        ---
+        **Fairness Thresholds:**
+        - 🟢 LOW: < 10%
+        - 🟡 MEDIUM: 10–20%
+        - 🔴 HIGH: > 20%
+        """
+    )
 
-    if value < 0.10:
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+
+def risk_label(value: float) -> str:
+    v = abs(value)
+    if v < 0.10:
         return "LOW"
-    elif value < 0.20:
+    elif v < 0.20:
         return "MEDIUM"
-    else:
-        return "HIGH"
+    return "HIGH"
 
 
-def show_risk(level, message):
-    if level == "LOW":
-        st.success(message)
-    elif level == "MEDIUM":
-        st.warning(message)
-    else:
-        st.error(message)
+def risk_color(label: str) -> str:
+    return {"LOW": "risk-low", "MEDIUM": "risk-medium", "HIGH": "risk-high"}[label]
 
 
-def pct(x):
-    if pd.isna(x):
-        return "N/A"
-    return f"{x * 100:.2f}%"
-
-
-def binary_encode(series, column_name="column"):
+def binary_encode(series: pd.Series):
     series = series.astype(str).str.strip()
-
-    if series.nunique() != 2:
-        st.error(
-            f"Column **{column_name}** must be binary for this MVP. "
-            f"It currently has {series.nunique()} unique values."
-        )
-        st.write("Unique values found:")
-        st.write(series.unique())
-        st.stop()
-
     values = sorted(series.unique())
-    mapping = {values[0]: 0, values[1]: 1}
-    encoded = series.map(mapping).values
-    positive_label = values[1]
-
-    return encoded, mapping, positive_label
-
-
-def get_sensitive_candidates(df, target_col=None):
-    candidates = []
-
-    possible_keywords = [
-        "gender", "sex", "race", "age", "caste", "religion",
-        "region", "state", "country", "nationality", "disability",
-        "marital", "relationship", "workclass", "education"
-    ]
-
-    for col in df.columns:
-        if col == target_col:
-            continue
-
-        unique_count = df[col].nunique()
-
-        if unique_count <= 20:
-            candidates.append(col)
-        else:
-            for key in possible_keywords:
-                if key in col.lower():
-                    candidates.append(col)
-                    break
-
-    # remove duplicates
-    candidates = list(dict.fromkeys(candidates))
-
-    if len(candidates) == 0:
-        candidates = [col for col in df.columns if col != target_col]
-
-    return candidates
-
-
-def dataset_bias_analysis(df, target_col, sensitive_col):
-    y_true, target_mapping, positive_label = binary_encode(df[target_col], target_col)
-    sensitive = df[sensitive_col].astype(str).str.strip()
-
-    temp = pd.DataFrame({
-        "sensitive_group": sensitive,
-        "target_encoded": y_true
-    })
-
-    group_stats = (
-        temp
-        .groupby("sensitive_group")
-        .agg(
-            total_records=("target_encoded", "count"),
-            positive_outcomes=("target_encoded", "sum"),
-            positive_rate=("target_encoded", "mean")
+    if len(values) != 2:
+        st.error(
+            f"Column must have exactly 2 unique values. Found: {values[:10]}"
         )
-        .reset_index()
-        .rename(columns={"sensitive_group": sensitive_col})
-    )
-
-    highest_group = group_stats.loc[group_stats["positive_rate"].idxmax()]
-    lowest_group = group_stats.loc[group_stats["positive_rate"].idxmin()]
-
-    positive_gap = highest_group["positive_rate"] - lowest_group["positive_rate"]
-    dataset_risk = risk_label(positive_gap)
-
-    return {
-        "group_stats": group_stats,
-        "highest_group": highest_group,
-        "lowest_group": lowest_group,
-        "positive_gap": positive_gap,
-        "dataset_risk": dataset_risk,
-        "target_mapping": target_mapping,
-        "positive_label": positive_label
-    }
-
-
-def model_bias_analysis(pred_df, true_col, pred_col, sensitive_col):
-    y_true, true_mapping, true_positive_label = binary_encode(pred_df[true_col], true_col)
-    y_pred, pred_mapping, pred_positive_label = binary_encode(pred_df[pred_col], pred_col)
-    sensitive = pred_df[sensitive_col].astype(str).str.strip()
-
-    metric_frame = MetricFrame(
-        metrics={
-            "Selection Rate": selection_rate,
-            "Accuracy": accuracy_score,
-            "True Positive Rate": true_positive_rate,
-            "False Positive Rate": false_positive_rate,
-            "False Negative Rate": false_negative_rate,
-        },
-        y_true=y_true,
-        y_pred=y_pred,
-        sensitive_features=sensitive
-    )
-
-    group_report = metric_frame.by_group.reset_index()
-
-    if "sensitive_feature_0" in group_report.columns:
-        group_report = group_report.rename(columns={"sensitive_feature_0": sensitive_col})
-    elif group_report.columns[0] != sensitive_col:
-        group_report = group_report.rename(columns={group_report.columns[0]: sensitive_col})
-
-    dp_diff = demographic_parity_difference(
-        y_true,
-        y_pred,
-        sensitive_features=sensitive
-    )
-
-    eo_diff = equalized_odds_difference(
-        y_true,
-        y_pred,
-        sensitive_features=sensitive
-    )
-
-    overall_accuracy = accuracy_score(y_true, y_pred)
-
-    highest_selection = group_report.loc[group_report["Selection Rate"].idxmax()]
-    lowest_selection = group_report.loc[group_report["Selection Rate"].idxmin()]
-
-    highest_accuracy = group_report.loc[group_report["Accuracy"].idxmax()]
-    lowest_accuracy = group_report.loc[group_report["Accuracy"].idxmin()]
-
-    highest_fnr = group_report.loc[group_report["False Negative Rate"].idxmax()]
-    lowest_fnr = group_report.loc[group_report["False Negative Rate"].idxmin()]
-
-    selection_gap = highest_selection["Selection Rate"] - lowest_selection["Selection Rate"]
-    accuracy_gap = highest_accuracy["Accuracy"] - lowest_accuracy["Accuracy"]
-    fnr_gap = highest_fnr["False Negative Rate"] - lowest_fnr["False Negative Rate"]
-
-    final_risk = risk_label(max(abs(dp_diff), abs(eo_diff), abs(selection_gap), abs(accuracy_gap)))
-
-    return {
-        "group_report": group_report,
-        "dp_diff": dp_diff,
-        "eo_diff": eo_diff,
-        "overall_accuracy": overall_accuracy,
-        "highest_selection": highest_selection,
-        "lowest_selection": lowest_selection,
-        "highest_accuracy": highest_accuracy,
-        "lowest_accuracy": lowest_accuracy,
-        "highest_fnr": highest_fnr,
-        "lowest_fnr": lowest_fnr,
-        "selection_gap": selection_gap,
-        "accuracy_gap": accuracy_gap,
-        "fnr_gap": fnr_gap,
-        "final_risk": final_risk,
-        "true_mapping": true_mapping,
-        "pred_mapping": pred_mapping,
-        "true_positive_label": true_positive_label,
-        "pred_positive_label": pred_positive_label
-    }
+        st.stop()
+    mapping = {values[0]: 0, values[1]: 1}
+    return series.map(mapping), mapping, values[1]
 
 
 # ============================================================
-# Step 1: Upload Dataset
+# STEP 1 — UPLOAD DATASET
 # ============================================================
 
-st.header("Step 1: Upload Dataset")
+st.markdown('<span class="step-badge">STEP 01</span> **Upload Dataset**', unsafe_allow_html=True)
 
 dataset_file = st.file_uploader(
-    "Upload original dataset CSV",
-    type=["csv"],
-    key="dataset_upload"
+    "Upload your dataset CSV", type=["csv"], key="dataset_file"
 )
 
 if dataset_file is None:
-    st.info("Upload a dataset CSV to begin.")
+    st.markdown(
+        '<div class="info-card">⬆️ Upload a CSV to begin. The file should contain a <b>target column</b> (outcome) and at least one <b>sensitive attribute</b> (e.g. gender, race, age group).</div>',
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 df = pd.read_csv(dataset_file)
 
-st.subheader("Raw Dataset Preview")
-st.dataframe(df.head())
+st.markdown(f"**{len(df):,} rows · {len(df.columns)} columns**")
+st.dataframe(df.head(8), use_container_width=True)
 
-original_rows = df.shape[0]
-df = df.dropna()
-clean_rows = df.shape[0]
-
-st.subheader("Dataset Information")
-
-c1, c2, c3 = st.columns(3)
-c1.metric("Original Rows", original_rows)
-c2.metric("Rows After Removing Missing Values", clean_rows)
-c3.metric("Columns", df.shape[1])
-
-columns = df.columns.tolist()
-
-st.write("---")
-
-
-# # ============================================================
-# # Step 2: Select Dataset Bias Columns
-# # ============================================================
-
-# st.header("Step 2: Select Columns for Dataset Bias Check")
-
-# target_col = st.selectbox(
-#     "Select target / outcome column",
-#     columns,
-#     help="Example: income, approved, hired, selected, admitted, loan_status"
-# )
-
-# sensitive_candidates = get_sensitive_candidates(df, target_col)
-
-# st.write("Suggested sensitive columns:")
-# st.write(", ".join(sensitive_candidates[:10]))
-
-# sensitive_col = st.selectbox(
-#     "Select sensitive column",
-#     sensitive_candidates,
-#     help="Example: gender, sex, age, race, region, workclass"
-# )
-
-# if target_col == sensitive_col:
-#     st.warning("Target column and sensitive column must be different.")
-#     st.stop()
-
-# st.info(
-#     f"You selected **{target_col}** as the decision/outcome column and "
-#     f"**{sensitive_col}** as the sensitive attribute."
-# )
+st.divider()
 
 # ============================================================
-# Step 2: Select Dataset Bias Columns
+# STEP 2 — COLUMN SELECTION
 # ============================================================
 
-st.header("Step 2: Select Columns for Dataset Bias Check")
+st.markdown('<span class="step-badge">STEP 02</span> **Select Columns**', unsafe_allow_html=True)
 
-columns = df.columns.tolist()
+cols = df.columns.tolist()
+c1, c2 = st.columns(2)
+with c1:
+    target_col = st.selectbox("🎯 Target Column (outcome)", cols)
+with c2:
+    sensitive_col = st.selectbox(
+        "🔒 Sensitive Attribute Column",
+        [c for c in cols if c != target_col],
+    )
 
-st.subheader("Select target / outcome column")
+# Quick preview
+c1, c2 = st.columns(2)
+with c1:
+    st.markdown(f"**Target distribution:**")
+    st.dataframe(df[target_col].value_counts().rename("count").reset_index(), use_container_width=True)
+with c2:
+    st.markdown(f"**Sensitive attribute distribution:**")
+    st.dataframe(df[sensitive_col].value_counts().rename("count").reset_index(), use_container_width=True)
 
-target_col = st.radio(
-    "Choose the decision/outcome column",
-    columns,
-    index=columns.index("income") if "income" in columns else 0,
-    horizontal=False,
-    key="target_radio"
-)
-
-sensitive_candidates = get_sensitive_candidates(df, target_col)
-
-st.subheader("Select sensitive column")
-
-sensitive_col = st.radio(
-    "Choose the sensitive/group column",
-    sensitive_candidates,
-    index=sensitive_candidates.index("sex") if "sex" in sensitive_candidates else 0,
-    horizontal=False,
-    key="sensitive_radio"
-)
-
-if target_col == sensitive_col:
-    st.warning("Target column and sensitive column must be different.")
-    st.stop()
-
-st.info(
-    f"You selected **{target_col}** as the target/outcome column and "
-    f"**{sensitive_col}** as the sensitive attribute."
-)
-st.write("---")
-
+st.divider()
 
 # ============================================================
-# Step 3: Dataset Bias Analysis
+# STEP 3 — DATASET BIAS ANALYSIS
 # ============================================================
 
-st.header("Step 3: Dataset Bias Analysis")
+st.markdown('<span class="step-badge">STEP 03</span> **Dataset Bias Analysis**', unsafe_allow_html=True)
 
-if st.button("Check Dataset Bias"):
+if st.button("🔍 Analyse Dataset Bias", use_container_width=True):
 
-    result = dataset_bias_analysis(df, target_col, sensitive_col)
+    with st.spinner("Computing group statistics..."):
+        y_true, mapping, positive_label = binary_encode(df[target_col])
 
-    group_stats = result["group_stats"]
-    highest_group = result["highest_group"]
-    lowest_group = result["lowest_group"]
-    positive_gap = result["positive_gap"]
-    dataset_risk = result["dataset_risk"]
-    target_mapping = result["target_mapping"]
-    positive_label = result["positive_label"]
+        temp = pd.DataFrame({"group": df[sensitive_col], "target": y_true})
+        group_stats = (
+            temp.groupby("group")
+            .agg(
+                Total=("target", "count"),
+                Positives=("target", "sum"),
+                Positive_Rate=("target", "mean"),
+            )
+            .reset_index()
+        )
+        group_stats["Positive_Rate_%"] = (group_stats["Positive_Rate"] * 100).round(2)
 
-    st.subheader("Target Meaning")
+        highest = group_stats.loc[group_stats["Positive_Rate"].idxmax()]
+        lowest = group_stats.loc[group_stats["Positive_Rate"].idxmin()]
+        gap = highest["Positive_Rate"] - lowest["Positive_Rate"]
+        risk = risk_label(gap)
+        css_class = risk_color(risk)
 
-    st.write(f"The selected target column is **{target_col}**.")
-    st.write(f"The app treats **{positive_label}** as the positive / favorable outcome.")
-    st.write("Encoding used:")
-    st.write(target_mapping)
+    st.subheader("Group Statistics")
+    st.dataframe(group_stats.drop(columns="Positive_Rate"), use_container_width=True)
 
-    st.subheader("Group-wise Dataset Bias Report")
-    st.dataframe(group_stats)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Highest Rate Group", highest["group"])
+    m2.metric("Lowest Rate Group", lowest["group"])
+    m3.metric("Outcome Gap", f"{gap * 100:.2f}%")
+    m4.metric("Bias Risk Level", risk)
 
-    st.subheader("Dataset Bias Risk")
-
-    show_risk(
-        dataset_risk,
-        f"{dataset_risk} DATASET BIAS RISK: Positive outcome gap is {positive_gap * 100:.2f}%."
+    st.markdown(
+        f'<p>Bias Risk: <span class="{css_class}">{risk}</span></p>',
+        unsafe_allow_html=True,
     )
 
-    st.subheader("Explanation in Simple Words")
+    # Store for AI buttons
+    st.session_state["dataset_metrics_text"] = f"""
+Sensitive attribute: {sensitive_col}
+Target column: {target_col} (positive label = "{positive_label}")
+Groups analysed: {", ".join(group_stats["group"].astype(str).tolist())}
+Highest positive rate group: {highest['group']} ({highest['Positive_Rate']*100:.2f}%)
+Lowest positive rate group: {lowest['group']} ({lowest['Positive_Rate']*100:.2f}%)
+Outcome gap: {gap*100:.2f}%
+Risk level: {risk}
+"""
 
-    st.write(
-        f"In this dataset, group **{highest_group[sensitive_col]}** receives the favorable outcome "
-        f"**{positive_label}** most often."
-    )
+# ---- AI Explanation ----
+if "dataset_metrics_text" in st.session_state:
+    c1, c2, c3 = st.columns(3)
 
-    st.write(
-        f"Positive outcome rate for **{highest_group[sensitive_col]}**: "
-        f"**{pct(highest_group['positive_rate'])}**"
-    )
+    with c1:
+        if st.button("🤖 Explain Bias (Claude)", use_container_width=True):
+            with st.spinner("Claude analysing bias..."):
+                explanation = explain_bias(st.session_state["dataset_metrics_text"])
+            st.session_state["dataset_explanation"] = explanation
 
-    st.write(
-        f"Group **{lowest_group[sensitive_col]}** receives the favorable outcome least often."
-    )
+    with c2:
+        if st.button("📄 Generate Audit Report", use_container_width=True):
+            with st.spinner("Claude generating report..."):
+                report = generate_fairness_report(st.session_state["dataset_metrics_text"])
+            st.session_state["dataset_report"] = report
 
-    st.write(
-        f"Positive outcome rate for **{lowest_group[sensitive_col]}**: "
-        f"**{pct(lowest_group['positive_rate'])}**"
-    )
+    with c3:
+        if st.button("💡 Suggest Mitigations", use_container_width=True):
+            with st.spinner("Claude suggesting mitigations..."):
+                mitigations = suggest_mitigation(st.session_state["dataset_metrics_text"])
+            st.session_state["dataset_mitigations"] = mitigations
 
-    st.write(
-        f"The gap between these two groups is **{positive_gap * 100:.2f}%**."
-    )
+    if "dataset_explanation" in st.session_state:
+        with st.expander("🤖 Claude Bias Explanation", expanded=True):
+            st.markdown(st.session_state["dataset_explanation"])
 
-    st.subheader("What This Means")
+    if "dataset_mitigations" in st.session_state:
+        with st.expander("💡 Mitigation Strategies", expanded=True):
+            st.markdown(st.session_state["dataset_mitigations"])
 
-    if dataset_risk == "HIGH":
-        st.error(
-            f"The dataset may contain strong historical unfairness. "
-            f"If a model is trained directly on this data, it may learn to favor "
-            f"**{highest_group[sensitive_col]}** over **{lowest_group[sensitive_col]}**."
-        )
-    elif dataset_risk == "MEDIUM":
-        st.warning(
-            f"The dataset shows moderate difference across **{sensitive_col}** groups. "
-            f"This should be reviewed before training a model."
-        )
-    else:
-        st.success(
-            f"The dataset does not show a large favorable-outcome gap for **{sensitive_col}**. "
-            f"However, other sensitive columns should also be tested."
-        )
+    if "dataset_report" in st.session_state:
+        with st.expander("📄 Full Audit Report", expanded=True):
+            st.markdown(st.session_state["dataset_report"])
+            st.download_button(
+                "⬇️ Download Report (.txt)",
+                data=st.session_state["dataset_report"],
+                file_name="faircheck_dataset_audit.txt",
+                mime="text/plain",
+            )
 
-    st.subheader("Personalized Dataset Bias Suggestions")
-
-    if positive_gap >= 0.20:
-        st.write(
-            f"**1.** Review why **{lowest_group[sensitive_col]}** has a much lower "
-            f"positive outcome rate than **{highest_group[sensitive_col]}**."
-        )
-        st.write(
-            f"**2.** Collect more representative data for **{lowest_group[sensitive_col]}**."
-        )
-        st.write(
-            f"**3.** Use rebalancing or sample reweighting before training a model."
-        )
-        st.write(
-            f"**4.** Check whether columns related to **{sensitive_col}** are acting as proxy variables."
-        )
-
-    elif positive_gap >= 0.10:
-        st.write(
-            f"**1.** The dataset shows moderate imbalance. Review the records for "
-            f"**{lowest_group[sensitive_col]}**."
-        )
-        st.write(
-            f"**2.** Try comparing results after balancing the dataset."
-        )
-
-    else:
-        st.write(
-            f"**1.** Dataset bias appears low for **{sensitive_col}**."
-        )
-        st.write(
-            f"**2.** Still test other sensitive columns before deciding the dataset is fair."
-        )
-
-st.write("---")
-
+st.divider()
 
 # ============================================================
-# Step 4: Optional Predictions Upload
+# STEP 4 — MODEL PREDICTION BIAS
 # ============================================================
 
-st.header("Step 4: Optional Model Prediction Fairness Check")
-
-st.write(
-    "Now upload a CSV file containing model predictions. "
-    "This file should contain:"
+st.markdown('<span class="step-badge">STEP 04</span> **Model Prediction Bias**', unsafe_allow_html=True)
+st.caption(
+    "Upload a CSV with columns: true labels, model predictions, and a sensitive attribute."
 )
 
-st.code(
-    """
-Required columns:
-1. True label column
-2. Prediction column
-3. Sensitive column
-
-Example:
-income, predicted_income, gender
-<=50K, <=50K, Female
->50K, <=50K, Male
-""",
-    language="text"
-)
-
-pred_file = st.file_uploader(
-    "Upload model predictions CSV",
-    type=["csv"],
-    key="prediction_upload"
-)
+pred_file = st.file_uploader("Upload predictions CSV", type=["csv"], key="pred_file")
 
 if pred_file is not None:
 
     pred_df = pd.read_csv(pred_file)
-    pred_df = pred_df.dropna()
+    st.markdown(f"**{len(pred_df):,} rows · {len(pred_df.columns)} columns**")
+    st.dataframe(pred_df.head(6), use_container_width=True)
 
-    st.subheader("Predictions File Preview")
-    st.dataframe(pred_df.head())
-
-    pred_columns = pred_df.columns.tolist()
-
-    st.subheader("Select Prediction File Columns")
-
-    true_col = st.selectbox(
-        "Select true label column",
-        pred_columns,
-        help="This is the actual correct label."
-    )
-
-    pred_col = st.selectbox(
-        "Select prediction column",
-        pred_columns,
-        help="This is the model predicted label."
-    )
-
-    prediction_sensitive_candidates = get_sensitive_candidates(pred_df, true_col)
-
-    sensitive_pred_col = st.selectbox(
-        "Select sensitive column in predictions file",
-        prediction_sensitive_candidates,
-        help="This should be the group column, such as gender, race, age_group, region."
-    )
-
-    if true_col == pred_col:
-        st.warning("True label column and prediction column should be different.")
-        st.stop()
-
-    if true_col == sensitive_pred_col or pred_col == sensitive_pred_col:
-        st.warning("Sensitive column should be different from true label and prediction column.")
-        st.stop()
-
-    if st.button("Check Model Prediction Bias"):
-
-        model_result = model_bias_analysis(
-            pred_df=pred_df,
-            true_col=true_col,
-            pred_col=pred_col,
-            sensitive_col=sensitive_pred_col
+    pred_cols = pred_df.columns.tolist()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        true_col = st.selectbox("✅ True Label Column", pred_cols, key="sel_true_col")
+    with c2:
+        pred_col = st.selectbox("🔮 Prediction Column", pred_cols, key="sel_pred_col")
+    with c3:
+        sensitive_pred = st.selectbox(
+            "🔒 Sensitive Column", pred_cols, key="sel_sensitive_pred"
         )
 
-        group_report = model_result["group_report"]
-        dp_diff = model_result["dp_diff"]
-        eo_diff = model_result["eo_diff"]
-        overall_accuracy = model_result["overall_accuracy"]
+    if st.button("🔍 Analyse Model Bias", use_container_width=True):
 
-        highest_selection = model_result["highest_selection"]
-        lowest_selection = model_result["lowest_selection"]
+        with st.spinner("Computing fairness metrics..."):
+            y_true, _, _ = binary_encode(pred_df[true_col])
+            y_pred, _, positive_label = binary_encode(pred_df[pred_col])
+            sensitive = pred_df[sensitive_pred]
 
-        highest_accuracy = model_result["highest_accuracy"]
-        lowest_accuracy = model_result["lowest_accuracy"]
-
-        highest_fnr = model_result["highest_fnr"]
-        lowest_fnr = model_result["lowest_fnr"]
-
-        selection_gap = model_result["selection_gap"]
-        accuracy_gap = model_result["accuracy_gap"]
-        fnr_gap = model_result["fnr_gap"]
-        final_risk = model_result["final_risk"]
-
-        pred_mapping = model_result["pred_mapping"]
-        pred_positive_label = model_result["pred_positive_label"]
-
-        st.header("Model Prediction Fairness Results")
-
-        st.subheader("Prediction Meaning")
-        st.write(f"The selected prediction column is **{pred_col}**.")
-        st.write(f"The app treats **{pred_positive_label}** as the positive model prediction.")
-        st.write("Prediction encoding used:")
-        st.write(pred_mapping)
-
-        st.subheader("Overall Model Accuracy")
-        st.metric("Accuracy", f"{overall_accuracy * 100:.2f}%")
-
-        st.write(
-            f"The uploaded model predictions matched the true labels in "
-            f"**{overall_accuracy * 100:.2f}%** of records."
-        )
-
-        st.subheader("Group-wise Model Fairness Report")
-        st.dataframe(group_report)
-
-        st.subheader("Overall Model Bias Risk")
-
-        show_risk(
-            final_risk,
-            f"{final_risk} MODEL BIAS RISK detected across **{sensitive_pred_col}** groups."
-        )
-
-        st.header("Metric Explanations Based on Your Predictions")
-
-        st.subheader("1. Selection Rate")
-
-        st.write(
-            f"Selection Rate means how often the model predicts the favorable outcome "
-            f"**{pred_positive_label}** for each **{sensitive_pred_col}** group."
-        )
-
-        st.write(
-            f"The model gives favorable predictions most often to "
-            f"**{highest_selection[sensitive_pred_col]}** at "
-            f"**{pct(highest_selection['Selection Rate'])}**."
-        )
-
-        st.write(
-            f"The model gives favorable predictions least often to "
-            f"**{lowest_selection[sensitive_pred_col]}** at "
-            f"**{pct(lowest_selection['Selection Rate'])}**."
-        )
-
-        st.write(
-            f"The selection-rate gap is **{selection_gap * 100:.2f}%**."
-        )
-
-        st.subheader("2. Demographic Parity Difference")
-
-        st.metric("Demographic Parity Difference", f"{dp_diff:.3f}")
-
-        st.write(
-            f"This metric checks whether different **{sensitive_pred_col}** groups receive "
-            f"favorable predictions at similar rates."
-        )
-
-        st.write(
-            f"In your predictions, the demographic parity gap is "
-            f"**{abs(dp_diff) * 100:.2f}%**."
-        )
-
-        st.subheader("3. Equalized Odds Difference")
-
-        st.metric("Equalized Odds Difference", f"{eo_diff:.3f}")
-
-        st.write(
-            f"This metric checks whether the model makes similar errors across "
-            f"different **{sensitive_pred_col}** groups."
-        )
-
-        st.write(
-            f"In your predictions, the equalized odds gap is "
-            f"**{abs(eo_diff) * 100:.2f}%**."
-        )
-
-        st.subheader("4. Accuracy Gap")
-
-        st.write(
-            f"The model is most accurate for **{highest_accuracy[sensitive_pred_col]}** "
-            f"with accuracy **{pct(highest_accuracy['Accuracy'])}**."
-        )
-
-        st.write(
-            f"The model is least accurate for **{lowest_accuracy[sensitive_pred_col]}** "
-            f"with accuracy **{pct(lowest_accuracy['Accuracy'])}**."
-        )
-
-        st.write(
-            f"The accuracy gap is **{accuracy_gap * 100:.2f}%**."
-        )
-
-        st.subheader("5. False Negative Rate")
-
-        st.write(
-            f"False Negative Rate means the model wrongly denies the favorable outcome "
-            f"**{pred_positive_label}** even when the true label was favorable."
-        )
-
-        st.write(
-            f"The highest false negative rate is for **{highest_fnr[sensitive_pred_col]}** "
-            f"at **{pct(highest_fnr['False Negative Rate'])}**."
-        )
-
-        st.header("Personalized Model Bias Suggestions")
-
-        suggestions = []
-
-        if selection_gap >= 0.20:
-            suggestions.append(
-                f"The model strongly favors **{highest_selection[sensitive_pred_col]}** over "
-                f"**{lowest_selection[sensitive_pred_col]}** in favorable predictions."
-            )
-            suggestions.append(
-                f"Use reweighting, resampling, or fairness-aware training to reduce this gap."
+            metric_frame = MetricFrame(
+                metrics={
+                    "Selection Rate": selection_rate,
+                    "Accuracy": accuracy_score,
+                    "TPR": true_positive_rate,
+                    "FPR": false_positive_rate,
+                    "FNR": false_negative_rate,
+                },
+                y_true=y_true,
+                y_pred=y_pred,
+                sensitive_features=sensitive,
             )
 
-        elif selection_gap >= 0.10:
-            suggestions.append(
-                f"The model shows moderate difference in favorable predictions between "
-                f"**{highest_selection[sensitive_pred_col]}** and "
-                f"**{lowest_selection[sensitive_pred_col]}**."
+            dp_diff = demographic_parity_difference(
+                y_true, y_pred, sensitive_features=sensitive
             )
+            eo_diff = equalized_odds_difference(
+                y_true, y_pred, sensitive_features=sensitive
+            )
+            accuracy = accuracy_score(y_true, y_pred)
+            risk = risk_label(max(abs(dp_diff), abs(eo_diff)))
+            css_class = risk_color(risk)
 
+        st.subheader("Per-Group Fairness Metrics")
+        group_report = metric_frame.by_group.reset_index()
+        st.dataframe(group_report, use_container_width=True)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Accuracy", f"{accuracy * 100:.2f}%")
+        m2.metric("Demographic Parity Diff", f"{dp_diff:.4f}")
+        m3.metric("Equalized Odds Diff", f"{eo_diff:.4f}")
+        m4.metric("Model Bias Risk", risk)
+
+        st.markdown(
+            f'<p>Model Bias Risk: <span class="{css_class}">{risk}</span></p>',
+            unsafe_allow_html=True,
+        )
+
+        model_metrics_text = f"""
+Sensitive attribute: {sensitive_pred}
+Accuracy: {accuracy * 100:.2f}%
+Demographic Parity Difference: {dp_diff:.4f}
+Equalized Odds Difference: {eo_diff:.4f}
+Bias risk level: {risk}
+Per-group metrics:
+{group_report.to_string(index=False)}
+"""
+        st.session_state["model_metrics_text"] = model_metrics_text
+        st.session_state["pred_df"] = pred_df
+        st.session_state["sensitive_pred"] = sensitive_pred
+        st.session_state["pred_col"] = pred_col
+
+    # ---- AI Buttons for Model ----
+    if "model_metrics_text" in st.session_state:
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🤖 Explain Model Bias (Claude)", use_container_width=True):
+                with st.spinner("Claude analysing model fairness..."):
+                    explanation = explain_bias(st.session_state["model_metrics_text"])
+                st.session_state["model_explanation"] = explanation
+
+        with c2:
+            if st.button("💡 Model Mitigation Strategies", use_container_width=True):
+                with st.spinner("Claude generating strategies..."):
+                    mitigations = suggest_mitigation(
+                        st.session_state["model_metrics_text"],
+                        context="This is a classification model, focus on post-processing and in-processing fairness techniques.",
+                    )
+                st.session_state["model_mitigations"] = mitigations
+
+        if "model_explanation" in st.session_state:
+            with st.expander("🤖 Claude Model Bias Explanation", expanded=True):
+                st.markdown(st.session_state["model_explanation"])
+
+        if "model_mitigations" in st.session_state:
+            with st.expander("💡 Model Mitigation Strategies", expanded=True):
+                st.markdown(st.session_state["model_mitigations"])
+
+st.divider()
+
+# ============================================================
+# STEP 5 — WHAT-IF BIAS SIMULATOR
+# ============================================================
+
+st.markdown('<span class="step-badge">STEP 05</span> **What-If Bias Simulator**', unsafe_allow_html=True)
+st.caption(
+    "Select a record and change its sensitive attribute to see if the model prediction changes — a sign of reliance on sensitive features."
+)
+
+if "pred_df" not in st.session_state:
+    st.info("Complete Step 4 (Model Prediction Bias) to unlock the What-If Simulator.")
+else:
+    sim_df = st.session_state["pred_df"]
+    sens_col = st.session_state["sensitive_pred"]
+    p_col = st.session_state["pred_col"]
+
+    unique_groups = sorted(sim_df[sens_col].astype(str).unique())
+
+    c1, c2 = st.columns(2)
+    with c1:
+        record_index = st.number_input(
+            "Record index", min_value=0, max_value=len(sim_df) - 1, value=0, step=1
+        )
+    with c2:
+        new_group = st.selectbox("Simulate: change group to", unique_groups)
+
+    if st.button("⚡ Run Simulation", use_container_width=True):
+        original_group = str(sim_df.loc[record_index, sens_col])
+        original_pred = str(sim_df.loc[record_index, p_col])
+
+        st.markdown("#### Simulation Result")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Original Group", original_group)
+        col2.metric("Simulated Group", new_group)
+        col3.metric("Model Prediction", original_pred)
+
+        if original_group != new_group:
+            st.warning(
+                "⚠️ **Potential Bias Detected**: Changing the sensitive attribute altered the group membership. "
+                "If a real model re-evaluated this record with the new group and changed its prediction, "
+                "it would indicate direct reliance on the sensitive attribute."
+            )
+            # Ask Claude to comment
+            sim_text = f"""
+Record index: {record_index}
+Original group ({sens_col}): {original_group}
+Simulated group: {new_group}
+Current prediction: {original_pred}
+This is a what-if scenario to test if the model is sensitive to the protected attribute.
+"""
+            with st.spinner("Claude assessing the simulation..."):
+                sim_explanation = explain_bias(sim_text)
+            st.subheader("🤖 Claude Assessment")
+            st.markdown(sim_explanation)
         else:
-            suggestions.append(
-                f"The model's favorable prediction rates are relatively balanced across "
-                f"**{sensitive_pred_col}** groups."
+            st.success(
+                "✅ No group change detected (same group selected). Try a different group to test counterfactual fairness."
             )
 
-        if accuracy_gap >= 0.15:
-            suggestions.append(
-                f"The model is much less accurate for **{lowest_accuracy[sensitive_pred_col]}**. "
-                f"Collect more data or improve feature quality for this group."
-            )
-
-        if fnr_gap >= 0.15:
-            suggestions.append(
-                f"False negatives are much higher for **{highest_fnr[sensitive_pred_col]}**. "
-                f"This group may be wrongly denied favorable outcomes more often."
-            )
-
-        if abs(dp_diff) >= 0.20:
-            suggestions.append(
-                f"Demographic parity difference is high. Reduce the favorable prediction gap "
-                f"before deployment."
-            )
-
-        if abs(eo_diff) >= 0.20:
-            suggestions.append(
-                f"Equalized odds difference is high. Check false positives and false negatives "
-                f"for each group separately."
-            )
-
-        for i, suggestion in enumerate(suggestions, start=1):
-            st.write(f"**{i}.** {suggestion}")
-
-        st.header("Deployment Recommendation")
-
-        if final_risk == "LOW":
-            st.success("Model can be considered for limited testing with continuous monitoring.")
-        elif final_risk == "MEDIUM":
-            st.warning("Model needs fairness review before deployment.")
-        else:
-            st.error("Model is not deployment-ready due to significant fairness risk.")
+st.divider()
+st.markdown(
+    '<p style="text-align:center; color:#333; font-family:\'IBM Plex Mono\', monospace; font-size:0.75rem;">FairCheck AI · Hack2Skill Hackathon · Powered by Gemini (Google)</p>',
+    unsafe_allow_html=True,
+)
