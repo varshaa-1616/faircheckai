@@ -121,7 +121,7 @@ streamlit run app.py
 * Select:
 
   * Target column → `income`
-  * Sensitive column → `sex`
+  * Sensitive column → `gender`
 
 ### Step 2: Model Fairness
 
@@ -130,7 +130,7 @@ streamlit run app.py
 
   * True label → `income`
   * Prediction → `prediction`
-  * Sensitive → `sex`
+  * Sensitive → `gender`
 
 ---
 
